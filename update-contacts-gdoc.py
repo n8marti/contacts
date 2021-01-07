@@ -19,15 +19,26 @@ template_id = '1EZ87N_6StrbLp_FdG7iriRqXwODcQ3-am1xjKBQk2oM'
 output_id = '1h0qzBSEDkH4Wan-4xKImW6oNCFNVvt7YcdzqMK4Rv7k'
 
 
-def parse_cmdline(args, infile_id=None, outfile_id=None):
+def do_cmdline(args, infile_id=None, outfile_id=None):
     """
     Handle all cmdline options.
     """
+    # Handle "help" option.
+    if "help" in args:
+        # Print help info and exit.
+        print("No help text yet...")
+        exit(0)
+
     # Define the service object.
+    print("Defining the service object...")
     creds = get_creds(SCOPES)
     service = build('docs', 'v1', credentials=creds)
 
-    # Handle options.
+    # Handle other options.
+    if "update" in args:
+        # Update output document with current information.
+        update_doc(service, output_id)
+
     if "data" in args:
         # Print spreadsheet data from Google Sheet.
         pass
@@ -42,6 +53,12 @@ def parse_cmdline(args, infile_id=None, outfile_id=None):
         pp = pprint.PrettyPrinter(depth=20)
         pp.pprint(template)
 
+    if "body" in args:
+        # Print Google Doc body code.
+        body = get_doc(service, infile_id)['body']
+        pp = pprint.PrettyPrinter(depth=20)
+        pp.pprint(body)
+
     if "cell" in args:
         # Print output describing a single table cell
         pass
@@ -51,6 +68,57 @@ def parse_cmdline(args, infile_id=None, outfile_id=None):
         body = get_doc(service, infile_id)["body"]
         pp = pprint.PrettyPrinter(depth=4)
         pp.pprint(body)
+
+    if "row" in args:
+        # Print one row of output from the body.
+        pass
+
+    if "table" in args:
+        # Print the table from the template.
+        parts = get_doc(service, infile_id)['body']['content']
+        for part in parts:
+            try:
+                pp = pprint.PrettyPrinter(depth=20)
+                pp.pprint(part['table'])
+            except KeyError:
+                pass
+
+    if "delete_range" in args:
+        # Delete the selected range from the template.
+        for i, j in enumerate(args):
+            if j == 'delete_range':
+                del_i = i
+        start = args[del_i + 1]
+        end = args[del_i + 2]
+        response = delete_range(service, infile_id, start, end)
+
+    if "delete_row" in args:
+        # Delete the selected table row from the template.
+        for i, j in enumerate(args):
+            if j == 'delete_row':
+                del_i = i
+        start = args[del_i + 1]
+        i_row = args[del_i + 2]
+        i_col = args[del_i + 3]
+        response = delete_row(service, infile_id, start, i_row, i_col)
+
+def update_doc(svc, doc_id):
+    # Get document contents.
+    print("Gathering info on existing document...")
+    doc_before = get_doc(svc, doc_id)
+
+    # Empty the existing document.
+    print("Deleting current contents...")
+    end = get_end(doc_before)
+    response = delete_all(svc, doc_id, end)
+
+    # Add new content.
+    # TODO: Need to build up a list of requests to apply all at once.
+    print("Adding new content...")
+    response = row_insert(svc, doc_id)
+    #row_borders(svc, doc_id)
+
+    print("Done.")
 
 def get_creds(scopes):
     creds = None
@@ -78,26 +146,71 @@ def get_doc(svc, doc_id):
     doc_dict = svc.documents().get(documentId=doc_id).execute()
     return doc_dict
 
+def get_end(doc):
+    # Return index of end position.
+    last = doc['body']['content'][-1]['endIndex']
+    # Have to back up one from "last" to preserve trailing newline.
+    end = last - 1
+    return end
+
 def get_sheet(svc, doc_id):
     pass
 
 def get_photos(svc, folder_id):
     pass
 
-def insert_table(svc, doc_id, index):
-    request1 = {
-        "insertTable": {
-            "rows": 10,
-            "columns": 1,
-            "location": {
-                "index": index,
+def row_insert(svc, doc_id):
+    # Insert a "row" (actually a 1x3 table) at the end of the document.
+    requests = [
+        {
+            "insertTable": {
+                "rows": 2,
+                "columns": 3,
+                "endOfSegmentLocation": {
+                    "segmentId": ''
+                }
             }
         }
-    }
-
-    requests = [request1]
+    ]
     response = svc.documents().batchUpdate(
         documentId=doc_id,
+        body = {'requests': requests}
+    ).execute()
+    return response
+
+def row_borders(svc, doc_id):
+    requests = [
+        {
+            "tableCellStyle": {
+                "tableStartLocation": {
+                    blahblah,
+                }
+            }
+        }
+    ]
+    response = svc.documents().batchUpdate(
+        documentId = doc_id,
+        body = {'requests': requests}
+    ).execute()
+    return response
+
+def populate_row(svc, doc_id):
+    # Add content to an existing empty table of 2 rows and 3 columns.
+    pass
+
+def delete_all(svc, doc_id, end):
+    requests = [
+        {
+            "deleteContentRange": {
+                "range": {
+                    "startIndex": 1,
+                    "endIndex": end,
+                }
+            }
+        }
+    ]
+    response = svc.documents().batchUpdate(
+        documentId = doc_id,
         body = {'requests': requests}
     ).execute()
     return response
@@ -113,7 +226,27 @@ def delete_range(svc, doc_id, start, end):
     }
     requests = [request1]
     response = svc.documents().batchUpdate(
-        documentId=doc_id,
+        documentId = doc_id,
+        body = {'requests': requests}
+    ).execute()
+    return response
+
+def delete_row(svc, doc_id, start, i_row, i_col):
+    requests = [
+        {
+            'deleteTableRow': {
+                'tableCellLocation': {
+                    'tableStartLocation': {
+                        'index': start
+                    },
+                    'rowIndex': i_row,
+                    'columnIndex': i_col
+                }
+            }
+        }
+    ]
+    response = svc.documents().batchUpdate(
+        documentId = doc_id,
         body = {'requests': requests}
     ).execute()
     return response
@@ -123,14 +256,7 @@ def main():
     Creates a Google Doc file that merges togehter photos and contact info
     gleaned from other shared Drive files.
     """
-    parse_cmdline(sys.argv, infile_id=template_id, outfile_id=output_id)
-
-    #insert_table(service, DOCUMENT_ID, 2)
-    #for start in outline.keys():
-    #    if outline[start]["type"] == "table":
-    #        end = outline[start]["end"]
-    #        delete_range(service, DOCUMENT_ID, start, end)
-    #get_outline(doc)
+    do_cmdline(sys.argv, infile_id=template_id, outfile_id=output_id)
 
 
 if __name__ == '__main__':
