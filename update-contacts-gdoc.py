@@ -55,7 +55,7 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
 
     if "photos" in args:
         # Print list of photo links gathered from Drive folder.
-        pass
+        photos = get_photos(dr_service, pics_dir_id)
 
     if "template" in args:
         # Print Google Doc template code.
@@ -202,6 +202,24 @@ def get_sheet(svc, sheet_id):
     rows = result.get('values', [])
     return rows
 
+def get_photos(svc, pics_dir_id):
+    #pics_dir_id = '0B70xx7zTo_vqVVZnM3p5LWV0aWs' # ACATBA team photos (by Paul)
+    fields_list = [
+        "id",
+        "name",
+        "webContentLink",
+        "webViewLink",
+        "iconLink",
+        "fullFileExtension",
+        "fileExtension",
+    ]
+    fields = f"files({', '.join(fields_list)})"
+    query = f"'{pics_dir_id}' in parents"
+    results = svc.files().list(q=query, fields=fields).execute()
+    items = results.get('files', [])
+    for item in items:
+        print(item)
+
 def create_abook(rows):
     # Take data output from spreadsheet and build contacts dictionary.
     abook = {}
@@ -216,9 +234,6 @@ def create_abook(rows):
         for c in range(len(row)):
             abook[full_name][rows[0][c]] = row[c]
     return abook
-
-def get_photos(svc, folder_id):
-    pass
 
 def send_requests(svc, doc_id, requests):
     response = svc.documents().batchUpdate(
@@ -367,13 +382,10 @@ def create_output_rows(abook):
 
 def row_data(row, index):
     requests = []
-    #print(row)
     qty = len(row)
-    if qty < 3:
-        pass
     for i in range(qty):
         # Adjust factor "f" so that entries are inserted at the beginning of the
-        #   row rather than the end.
+        #   row rather than at the end.
         f = i + 3 - qty
         full_name = f"{row[i]['Name 1']}, {row[i]['Name 2']}"
         team = row[i]['Team']
@@ -390,12 +402,7 @@ def row_data(row, index):
                 }
             }
         })
-    print(requests)
     return requests
-
-def populate_row(svc, doc_id):
-    # Add content to an existing empty table of 2 rows and 3 columns.
-    pass
 
 def delete_all(svc, doc_id, end):
     response = None
@@ -417,15 +424,14 @@ def delete_all(svc, doc_id, end):
     return response
 
 def delete_range(svc, doc_id, start, end):
-    request1 = {
+    requests = [{
         "deleteContentRange": {
             "range": {
                 "startIndex": start,
                 "endIndex": end,
             }
         }
-    }
-    requests = [request1]
+    }]
     response = svc.documents().batchUpdate(
         documentId = doc_id,
         body = {'requests': requests}
@@ -455,7 +461,7 @@ def delete_row(svc, doc_id, start, i_row, i_col):
 def main():
     """
     Creates a Google Doc file that merges togehter photos and contact info
-    gleaned from other shared Drive files.
+    gleaned from other shared Drive items.
     """
     do_cmdline(sys.argv, infile_id=template_id, outfile_id=output_id)
 
