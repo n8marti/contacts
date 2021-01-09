@@ -41,7 +41,7 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
     dr_service = build('drive', 'v3', credentials=creds)
 
     # Handle other options.
-    if "update" in args:
+    if "update" in args or len(args) == 1: # default option
         # Update output document with current information.
         update_doc(output_id, doc_svc=doc_service, sht_svc=sh_service)
         data = get_doc(doc_service, output_id)
@@ -56,6 +56,11 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
     if "photos" in args:
         # Print list of photo links gathered from Drive folder.
         photos = get_photos(dr_service, pics_dir_id)
+        if len(photos) > 0:
+            for photo in photos:
+                print(photo)
+        else:
+            print("None")
 
     if "template" in args:
         # Print Google Doc template code.
@@ -215,10 +220,10 @@ def get_photos(svc, pics_dir_id):
     ]
     fields = f"files({', '.join(fields_list)})"
     query = f"'{pics_dir_id}' in parents"
+    print("Searching for photos in shared folder...")
     results = svc.files().list(q=query, fields=fields).execute()
     items = results.get('files', [])
-    for item in items:
-        print(item)
+    return items
 
 def create_abook(rows):
     # Take data output from spreadsheet and build contacts dictionary.
