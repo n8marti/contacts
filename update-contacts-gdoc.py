@@ -20,7 +20,7 @@ SCOPES = [
 template_id = '1EZ87N_6StrbLp_FdG7iriRqXwODcQ3-am1xjKBQk2oM'    # ACATBA Photo Directory TEMPLATE
 sheet_id = '1fXHB3I9fryPjsIyptizicTE7B7x1GdMJXxA170zOrJY'       # ACATBA Contact Directory - Dec 2020
 pics_dir_id = '1gx5ak18CYgtO6lz9jDEhu3nD3zOIkPP7'               # ACATBA photos for importing
-output_id = '1h0qzBSEDkH4Wan-4xKImW6oNCFNVvt7YcdzqMK4Rv7k'      # ACATBA Photo Directory TEMPLATE
+output_id = '1h0qzBSEDkH4Wan-4xKImW6oNCFNVvt7YcdzqMK4Rv7k'      # ACATBA Photo Directory
 
 
 def do_cmdline(args, infile_id=None, outfile_id=None):
@@ -41,11 +41,20 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
     dr_service = build('drive', 'v3', credentials=creds)
 
     # Handle other options.
+
+    if "test" in args:
+        link = 'https://drive.google.com/uc?id=1b9Dfpfb7G-kASaE02e0XzqFBtpjtlL2Y&export=download'
+        requests = add_image(link)
+        doc_svc = doc_service
+        doc_id = output_id
+        result = send_requests(doc_svc, doc_id, requests)
+        exit()
+
     if "update" in args or len(args) == 1: # default option
         # Update output document with current information.
-        update_doc(output_id, doc_svc=doc_service, sht_svc=sh_service)
+        update_doc(output_id, doc_svc=doc_service, sht_svc=sh_service, dir_svc=dr_service)
         data = get_doc(doc_service, output_id)
-        print(data)
+        #print(data)
 
     if "data" in args:
         # Print spreadsheet data from Google Sheet.
@@ -58,7 +67,7 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
         photos = get_photos(dr_service, pics_dir_id)
         if len(photos) > 0:
             for photo in photos:
-                print(photo)
+                print(f"{photo['name']}: {photo['webContentLink']}")
         else:
             print("None")
 
@@ -133,7 +142,7 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
         requests = row_data(rows_out)
         print(requests)
 
-def update_doc(doc_id, doc_svc=None, sht_svc=None):
+def update_doc(doc_id, doc_svc=None, sht_svc=None, dir_svc=None):
     # Get document contents.
     print("Gathering info on existing document...")
     doc_before = get_doc(doc_svc, doc_id)
@@ -144,26 +153,28 @@ def update_doc(doc_id, doc_svc=None, sht_svc=None):
     response = delete_all(doc_svc, doc_id, end)
 
     # Add new content.
+    print("Gathering updated content...")
     requests = []
     input_rows = get_sheet(sht_svc, sheet_id)
-    abook = create_abook(input_rows)
+    photos = get_photos(dir_svc, pics_dir_id)
+    abook = create_abook(input_rows, photos)
     rows = create_output_rows(abook)
-    first_table_index = 1
+    table_start_index = 1
     last_cell_index = 16
     rows.reverse()
     for row in rows:
         # Insert new doc table row.
-        requests.append(row_insert(first_table_index))
+        requests.append(table_insert(table_start_index))
         # Modify table row properties.
-        #requests.append(row_borders(first_table_index + 1))
+        requests.append(table_update_borders(table_start_index + 1))
+        # Modify text properties.
+        requests.append(table_update_format(table_start_index, last_cell_index))
         # Insert contact data.
         requests.extend(row_data(row, last_cell_index))
-        #break
 
     # Execute update.
-    print("Uploading new content...")
+    print("Gathering updated content...")
     result = send_requests(doc_svc, doc_id, requests)
-    print(result)
     print("Done.")
 
 def get_creds(scopes):
@@ -208,36 +219,53 @@ def get_sheet(svc, sheet_id):
     return rows
 
 def get_photos(svc, pics_dir_id):
-    #pics_dir_id = '0B70xx7zTo_vqVVZnM3p5LWV0aWs' # ACATBA team photos (by Paul)
     fields_list = [
-        "id",
+        #"id",
         "name",
+        "size",
         "webContentLink",
-        "webViewLink",
-        "iconLink",
-        "fullFileExtension",
-        "fileExtension",
+        #"webViewLink",
+        #"iconLink",
+        #"fullFileExtension",
+        #"fileExtension",
     ]
     fields = f"files({', '.join(fields_list)})"
     query = f"'{pics_dir_id}' in parents"
     print("Searching for photos in shared folder...")
     results = svc.files().list(q=query, fields=fields).execute()
     items = results.get('files', [])
-    return items
+    photos_dict = {}
+    for i in items:
+        name = i["name"].split('.')[0].split('_')[0]
+        try:
+            photos_dict[name][i["webContentLink"]] = int(i["size"])
+        except KeyError:
+            photos_dict[name] = {i["webContentLink"]: int(i["size"])}
 
-def create_abook(rows):
+    return photos_dict
+
+def create_abook(rows, photos):
     # Take data output from spreadsheet and build contacts dictionary.
     abook = {}
     for row in rows[1:]:
         # Pad rows if not enough data.
-        full_length = 10
-        if len(row) < full_length:
+        full_length = 8
+        if len(row) == 1:
+            # Heading row (e.g. "Admin/Coordinators"); skip it.
+            continue
+        elif len(row) < full_length:
             row += [''] * (full_length - len(row))
         # Use data from all columns.
         full_name = f"{row[3]}, {row[4]}"
         abook[full_name] = {}
         for c in range(len(row)):
             abook[full_name][rows[0][c]] = row[c]
+        try:
+            # List all photo links.
+            abook[full_name]['photo'] = photos[full_name]
+        except KeyError:
+            print(f"Check the spelling for {full_name} in the pictures folder.")
+            abook[full_name]['photo'] = None
     return abook
 
 def send_requests(svc, doc_id, requests):
@@ -247,8 +275,8 @@ def send_requests(svc, doc_id, requests):
     ).execute()
     return response
 
-def row_insert(index):
-    # Insert a "row" (actually a 1x3 table) at the end of the document.
+def table_insert(index):
+    # Insert a "row" (actually a  table of 2 rows x 3 columns) at the end of the document.
     request = {
         "insertTable": {
             "rows": 2,
@@ -260,7 +288,7 @@ def row_insert(index):
     }
     return request
 
-def row_borders(start):
+def table_update_borders(start):
     request = {
         "updateTableCellStyle": {
             "tableCellStyle": {
@@ -337,6 +365,24 @@ def row_borders(start):
     }
     return request
 
+def table_update_format(start_index, end_index):
+    request = {
+        "updateTextStyle": {
+            "range": {
+                "startIndex": 12,
+                "endIndex": 17,
+            },
+            "textStyle": {
+                "fontSize": {
+                    "magnitude": 10,
+                    "unit": 'PT'
+                }
+            },
+            "fields": 'fontSize'
+        }
+    }
+    return request
+
 def create_output_rows(abook):
     # Add rows as necessary, populate contact data into each row.
     teams = {}
@@ -350,6 +396,7 @@ def create_output_rows(abook):
     rows = []
     sections = []
     for team, members in teams.items():
+        # TODO: This is where the rows would be force-sorted.
         # Handle Admin first.
         if team == "Admin":
             sections.insert(0, {team: members})
@@ -385,29 +432,113 @@ def create_output_rows(abook):
 
     return final_rows
 
-def row_data(row, index):
+def row_data(row, last_cell_index):
     requests = []
-    qty = len(row)
-    for i in range(qty):
-        # Adjust factor "f" so that entries are inserted at the beginning of the
-        #   row rather than at the end.
-        f = i + 3 - qty
-        full_name = f"{row[i]['Name 1']}, {row[i]['Name 2']}"
+    people_in_row = len(row)
+
+    # Insert text first.
+    for i in range(people_in_row):
+        # Set position "pos_from_right" so that entries are justified to the
+        #   beginning of the row rather than to the end.
+        pos_from_right = i + 3 - people_in_row
+        # text_index is 12, 14, or 16
+        text_index = last_cell_index - 2 * pos_from_right
+
+        # Define contact info variables.
+        full_name = f"{row[i]['Last Name']}, {row[i]['First Name']}"
         team = row[i]['Team']
         title = row[i]['Role']
-        emails = f"{row[i]['Email 1']}, {row[i]['Email 2']}"
+        emails = f"{row[i]['Email']}"
         skype = row[i]['Skype Name']
-        phones = f"{row[i]['Phone 1']}, {row[i]['Phone 2']}"
-        text = f"{full_name}\n{team}, {title}\nEmail: {emails}\nSkype: {skype}\nTel: {phones}"
+        phones = f"{row[i]['Phone']}\n"
+
+        # Organize contact data.
+        rows = []
+        if full_name:
+            rows.append(full_name)
+        if team and title:
+            title_row = f"{team}, {title}"
+            rows.append(title_row)
+        if emails:
+            email_row = f"Email:\n {emails}"
+            rows.append(email_row)
+        if skype:
+            skype_row = f"Skype:\n {skype}"
+            rows.append(skype_row)
+        if phones:
+            phone_row = f"Phone:\n {phones}"
+            rows.append(phone_row)
+        text = '\n'.join(rows)
         requests.append({
             'insertText': {
                 "text": text,
                 "location": {
-                    "index": index - 2 * f
+                    "index": text_index
+                }
+            }
+        })
+
+    # Insert photos last.
+    for i in range(people_in_row):
+        pos_from_right = i + 3 - people_in_row
+        # photo_index is 5, 7, or 9
+        photo_index = last_cell_index - 7 - 2 * pos_from_right
+        photo_links = row[i]['photo']
+
+        # Select largest available photo.
+        sizes = [v for v in photo_links.values()]
+        sizes.sort(reverse=True)
+        photo_link = None
+        for link, size in photo_links.items():
+            if sizes[0] == size:
+                photo_link = link
+
+        if not photo_link:
+            print(f"No photo for {row[i]['Last Name']}, {row[i]['First Name']}.")
+            # Use placeholder image if photo isn't found.
+            photo_link = 'https://drive.google.com/uc?id=1JE7lhkcRWPf0yrasVHu9S0qPWidsktvy&export=download'
+        requests.append({
+            'insertInlineImage': {
+                'location': {
+                    'index': photo_index
+                },
+                'uri': photo_link,
+                'objectSize': {
+                    'height': {
+                        'magnitude': 140,
+                        'unit': 'PT'
+                    },
+                    'width': {
+                        'magnitude': 140,
+                        'unit': 'PT'
+                    }
                 }
             }
         })
     return requests
+
+def add_photo(link, index):
+    requests = [{
+        'insertInlineImage': {
+            'location': {
+                'index': 1
+            },
+            'uri':
+                link,
+            'objectSize': {
+                'height': {
+                    'magnitude': 50,
+                    'unit': 'PT'
+                },
+                'width': {
+                    'magnitude': 50,
+                    'unit': 'PT'
+                }
+            }
+        }
+    }]
+    return requests
+
 
 def delete_all(svc, doc_id, end):
     response = None
@@ -465,7 +596,7 @@ def delete_row(svc, doc_id, start, i_row, i_col):
 
 def main():
     """
-    Creates a Google Doc file that merges togehter photos and contact info
+    Creates a Google Doc file that merges together photos and contact info
     gleaned from other shared Drive items.
     """
     do_cmdline(sys.argv, infile_id=template_id, outfile_id=output_id)

@@ -4,3 +4,9 @@ The goal is to create a script that will create a Google Doc contacts sheet by:
  - inserting a photo of each contact from a shared Drive folder
  - adding in contact info from a shared Google Sheet
  - also possibly exporting it to a PDF for printing
+
+Initialize the venv with:
+```shell
+$ cd $HOME/dev/contacts
+$ . venv/bin/activate
+```
