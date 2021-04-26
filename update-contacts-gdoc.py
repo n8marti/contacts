@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-import os.path
 import pickle
 import sys
 import pprint
+
+from pathlib import Path
 
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -16,82 +17,117 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive.metadata.readonly',
 ]
 
-# Google object IDs to be used.
-template_id = '1EZ87N_6StrbLp_FdG7iriRqXwODcQ3-am1xjKBQk2oM'    # ACATBA Photo Directory TEMPLATE
-sheet_id = '1fXHB3I9fryPjsIyptizicTE7B7x1GdMJXxA170zOrJY'       # ACATBA Contact Directory - Dec 2020
-pics_dir_id = '1gx5ak18CYgtO6lz9jDEhu3nD3zOIkPP7'               # ACATBA photos for importing
-output_id = '1h0qzBSEDkH4Wan-4xKImW6oNCFNVvt7YcdzqMK4Rv7k'      # ACATBA Photo Directory
+### Google object IDs to be used.
+
+# ACATBA Photo Directory TEMPLATE
+# https://docs.google.com/document/d/1EZ87N_6StrbLp_FdG7iriRqXwODcQ3-am1xjKBQk2oM
+template_id = '1EZ87N_6StrbLp_FdG7iriRqXwODcQ3-am1xjKBQk2oM'
+
+# ACATBA Contact Directory - Dec 2020
+# https://docs.google.com/spreadsheets/d/1fXHB3I9fryPjsIyptizicTE7B7x1GdMJXxA170zOrJY
+sheet_id = '1fXHB3I9fryPjsIyptizicTE7B7x1GdMJXxA170zOrJY'
+
+# ACATBA photos for importing
+# https://drive.google.com/drive/folders/1gx5ak18CYgtO6lz9jDEhu3nD3zOIkPP7
+pics_dir_id = '1gx5ak18CYgtO6lz9jDEhu3nD3zOIkPP7'
+
+# ACATBA Photo Directory
+# https://docs.google.com/document/d/1h0qzBSEDkH4Wan-4xKImW6oNCFNVvt7YcdzqMK4Rv7k
+output_id = '1h0qzBSEDkH4Wan-4xKImW6oNCFNVvt7YcdzqMK4Rv7k'
 
 
 def do_cmdline(args, infile_id=None, outfile_id=None):
-    """
-    Handle all cmdline options.
-    """
+    """Handle all cmdline options."""
+
     # Handle "help" option.
-    if "help" in args:
-        # Print help info and exit.
-        print("No help text yet...")
-        exit(0)
+    for help in {'help', '--help', '-h'}:
+        if help in args:
+            # Print help info and exit.
+            print("No help text yet...")
+            exit(0)
 
-    # Define the service objects.
-    print("Defining the service object...")
-    creds = get_creds(SCOPES)
-    doc_service = build('docs', 'v1', credentials=creds)
-    sh_service = build('sheets', 'v4', credentials=creds)
-    dr_service = build('drive', 'v3', credentials=creds)
+    # Handle options.
+    # "Update" is default option if none are given.
+    if "update" in args or len(args) == 1:
+        """Update output document with current information."""
 
-    # Handle other options.
+        # Build services.
+        svc_dict = build_services(['docs', 'sheets', 'drive'])
+        doc_svc = svc_dict['docs']
+        sh_svc = svc_dict['sheets']
+        dr_svc = svc_dict['drive']
 
-    if "test" in args:
-        link = 'https://drive.google.com/uc?id=1b9Dfpfb7G-kASaE02e0XzqFBtpjtlL2Y&export=download'
-        requests = add_image(link)
-        doc_svc = doc_service
-        doc_id = output_id
-        result = send_requests(doc_svc, doc_id, requests)
+        # Update document.
+        update_doc(outfile_id, doc_svc=doc_svc, sht_svc=sh_svc, dir_svc=dr_svc)
         exit()
 
-    if "update" in args or len(args) == 1: # default option
-        # Update output document with current information.
-        update_doc(output_id, doc_svc=doc_service, sht_svc=sh_service, dir_svc=dr_service)
-        data = get_doc(doc_service, output_id)
-        #print(data)
-
     if "data" in args:
-        # Print spreadsheet data from Google Sheet.
-        print("Getting data from spreadsheet...")
-        rows = get_sheet(sh_service, sheet_id)
-        print(rows)
+        """Print file content from doc, sheet, or template."""
+        file_type = 'sheets' # default option
+        obj_id = sheet_id
+        if len(args) > 2:
+            for i, arg in enumerate(args):
+                if arg == "data":
+                    object = args[i-1]
+                    if object in {'doc', 'docs', 'template'}:
+                        file_type = 'docs'
+                        if object == 'template':
+                            obj_id = infile_id
+                        else:
+                            obj_id = outfile_id
+                    elif object in {'sheet', 'sheets'}:
+                        file_type = 'sheets'
+                        obj_id = sheet_id
+                    elif object in {'drive', 'photo', 'photos'}:
+                        file_type = 'drive'
+                        obj_id = pics_dir_id
+                    else:
+                        print(f"Bad file type given ({object}).")
+                        exit(1)
+                    break
 
-    if "photos" in args:
-        # Print list of photo links gathered from Drive folder.
-        photos = get_photos(dr_service, pics_dir_id)
-        if len(photos) > 0:
-            for photo in photos:
-                print(f"{photo['name']}: {photo['webContentLink']}")
-        else:
-            print("None")
+        # Build services.
+        svc_dict = build_services([file_type])
+        svc = svc_dict[file_type]
 
-    if "template" in args:
-        # Print Google Doc template code.
-        template = get_doc(doc_service, infile_id)
-        pp = pprint.PrettyPrinter(depth=20)
-        pp.pprint(template)
+        # Print data from file_type.
+        print(f"Getting data from {object}...")
+        if file_type == 'sheets':
+            data = get_sheet(svc, obj_id)
+        elif file_type == 'docs':
+            data = get_doc(svc, obj_id)
+        elif file_type == 'drive':
+            data = get_photos(svc, obj_id)
+        print(data)
+        exit()
 
     if "body" in args:
-        # Print Google Doc body code.
-        body = get_doc(doc_service, infile_id)['body']
+        """Print Google Doc body code."""
+        # Build services.
+        svc_dict = build_services(['docs'])
+        svc = svc_dict['docs']
+        # Get content.
+        body = get_doc(svc, infile_id)['body']
         pp = pprint.PrettyPrinter(depth=20)
         pp.pprint(body)
 
     if "outline" in args:
-        # Print output outlining the body of the document.
-        body = get_doc(doc_service, infile_id)["body"]
+        """Print output outlining the body of the document."""
+        # Build services.
+        svc_dict = build_services(['docs'])
+        svc = svc_dict['docs']
+        # Get content.
+        body = get_doc(svc, infile_id)["body"]
         pp = pprint.PrettyPrinter(depth=4)
         pp.pprint(body)
 
     if "table" in args:
-        # Print the table from the template.
-        parts = get_doc(doc_service, infile_id)['body']['content']
+        """Print the table from the template."""
+        # Build services.
+        svc_dict = build_services(['docs'])
+        svc = svc_dict['docs']
+
+        parts = get_doc(svc, infile_id)['body']['content']
         for part in parts:
             try:
                 pp = pprint.PrettyPrinter(depth=20)
@@ -100,47 +136,31 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
                 pass
 
     if "delete_range" in args:
-        # Delete the selected range from the template.
+        """Delete the selected range from the template."""
+        # Build services.
+        svc_dict = build_services(['docs'])
+        svc = svc_dict['docs']
+
         for i, j in enumerate(args):
             if j == 'delete_range':
                 del_i = i
         start = args[del_i + 1]
         end = args[del_i + 2]
-        response = delete_range(doc_service, infile_id, start, end)
+        response = delete_range(svc, infile_id, start, end)
 
     if "delete_row" in args:
-        # Delete the selected table row from the template.
+        """Delete the selected table row from the template."""
+        # Build services.
+        svc_dict = build_services(['docs'])
+        svc = svc_dict['docs']
+
         for i, j in enumerate(args):
             if j == 'delete_row':
                 del_i = i
         start = args[del_i + 1]
         i_row = args[del_i + 2]
         i_col = args[del_i + 3]
-        response = delete_row(doc_service, infile_id, start, i_row, i_col)
-
-    if "abook" in args:
-        # Print address book.
-        print("Getting data from spreadsheet...")
-        rows = get_sheet(sh_service, sheet_id)
-        abook = create_abook(rows)
-        print(abook)
-
-    if "rows" in args:
-        # Print output of 1st table row.
-        print("Getting data from spreadsheet...")
-        rows = get_sheet(sh_service, sheet_id)
-        abook = create_abook(rows)
-        rows_out = create_output_rows(abook)
-        print(rows_out)
-
-    if "tables" in args:
-        # Print output of tables requests.
-        print("Getting data from spreadsheet...")
-        rows = get_sheet(sh_service, sheet_id)
-        abook = create_abook(rows)
-        rows_out = create_output_rows(abook)
-        requests = row_data(rows_out)
-        print(requests)
+        response = delete_row(svc, infile_id, start, i_row, i_col)
 
 def update_doc(doc_id, doc_svc=None, sht_svc=None, dir_svc=None):
     # Get document contents.
@@ -177,12 +197,32 @@ def update_doc(doc_id, doc_svc=None, sht_svc=None, dir_svc=None):
     result = send_requests(doc_svc, doc_id, requests)
     print("Done.")
 
+def build_services(services):
+    # Initialize variables.
+    doc_service = None
+    sh_service = None
+    dr_service = None
+    # Build necessary services.
+    print(f"Building service objects for {', '.join(services)}...")
+    creds = get_creds(SCOPES)
+    if 'docs' in services:
+        doc_service = build('docs', 'v1', credentials=creds)
+    if 'sheets' in services:
+        sh_service = build('sheets', 'v4', credentials=creds)
+    if 'drive' in services:
+        dr_service = build('drive', 'v3', credentials=creds)
+    return {
+        'docs': doc_service,
+        'sheets': sh_service,
+        'drive': dr_service,
+    }
+
 def get_creds(scopes):
     creds = None
     # The file token.pickle stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
-    if os.path.exists('token.pickle'):
+    if Path('token.pickle').is_file():
         with open('token.pickle', 'rb') as token:
             creds = pickle.load(token)
     # If there are no (valid) credentials available, let the user log in.
@@ -595,10 +635,8 @@ def delete_row(svc, doc_id, start, i_row, i_col):
     return response
 
 def main():
-    """
-    Creates a Google Doc file that merges together photos and contact info
-    gleaned from other shared Drive items.
-    """
+    """Creates a Google Doc file that merges together photos and contact info
+    gleaned from other shared Drive items."""
     do_cmdline(sys.argv, infile_id=template_id, outfile_id=output_id)
 
 
