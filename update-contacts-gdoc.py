@@ -50,13 +50,11 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
     # "Update" is default option if none are given.
     if "update" in args or len(args) == 1:
         """Update output document with current information."""
-
         # Build services.
         svc_dict = build_services(['docs', 'sheets', 'drive'])
         doc_svc = svc_dict['docs']
         sh_svc = svc_dict['sheets']
         dr_svc = svc_dict['drive']
-
         # Update document.
         update_doc(outfile_id, doc_svc=doc_svc, sht_svc=sh_svc, dir_svc=dr_svc)
         exit()
@@ -69,12 +67,15 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
             for i, arg in enumerate(args):
                 if arg == "data":
                     object = args[i-1]
+                    if args[i+1]:
+                        obj_id = args[i+1]
                     if object in {'doc', 'docs', 'template'}:
                         file_type = 'docs'
                         if object == 'template':
                             obj_id = infile_id
                         else:
-                            obj_id = outfile_id
+                            if not obj_id:
+                                obj_id = outfile_id
                     elif object in {'sheet', 'sheets'}:
                         file_type = 'sheets'
                         obj_id = sheet_id
@@ -111,6 +112,16 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
         pp = pprint.PrettyPrinter(depth=20)
         pp.pprint(body)
 
+    if "docstyle" in args:
+        """Print Google Doc documentStyle code."""
+        # Build services.
+        svc_dict = build_services(['docs'])
+        svc = svc_dict['docs']
+        # Get content.
+        body = get_doc(svc, outfile_id)['documentStyle']
+        pp = pprint.PrettyPrinter(depth=20)
+        pp.pprint(body)
+
     if "outline" in args:
         """Print output outlining the body of the document."""
         # Build services.
@@ -126,7 +137,7 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
         # Build services.
         svc_dict = build_services(['docs'])
         svc = svc_dict['docs']
-
+        # Get content.
         parts = get_doc(svc, infile_id)['body']['content']
         for part in parts:
             try:
@@ -140,7 +151,7 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
         # Build services.
         svc_dict = build_services(['docs'])
         svc = svc_dict['docs']
-
+        # Execute deletion.
         for i, j in enumerate(args):
             if j == 'delete_range':
                 del_i = i
@@ -153,7 +164,7 @@ def do_cmdline(args, infile_id=None, outfile_id=None):
         # Build services.
         svc_dict = build_services(['docs'])
         svc = svc_dict['docs']
-
+        # Execute deletion.
         for i, j in enumerate(args):
             if j == 'delete_row':
                 del_i = i
@@ -167,14 +178,35 @@ def update_doc(doc_id, doc_svc=None, sht_svc=None, dir_svc=None):
     print("Gathering info on existing document...")
     doc_before = get_doc(doc_svc, doc_id)
 
-    # Empty the existing document.
-    print("Deleting current contents...")
-    end = get_end(doc_before)
-    response = delete_all(doc_svc, doc_id, end)
-
     # Add new content.
     print("Gathering updated content...")
     requests = []
+
+    # Adjust document properties.
+    req_prop = {
+        'updateDocumentStyle': {
+            'documentStyle': {
+                'marginLeft': {
+                    'magnitude': 20, 'unit': 'PT'
+                },
+                'marginRight': {
+                    'magnitude': 20, 'unit': 'PT'
+                },
+                'pageSize': {
+                    'height': {
+                        'magnitude': 841.8897637795277, 'unit': 'PT'
+                    },
+                    'width': {
+                        'magnitude': 595.2755905511812, 'unit': 'PT'
+                    }
+                },
+            },
+            'fields': 'marginLeft,marginRight,pageSize',
+        },
+    }
+    requests.append(req_prop)
+
+    # Build main content.
     input_rows = get_sheet(sht_svc, sheet_id)
     photos = get_photos(dir_svc, pics_dir_id)
     abook = create_abook(input_rows, photos)
@@ -191,9 +223,16 @@ def update_doc(doc_id, doc_svc=None, sht_svc=None, dir_svc=None):
         requests.append(table_update_format(table_start_index, last_cell_index))
         # Insert contact data.
         requests.extend(row_data(row, last_cell_index))
+    req_title = ''
+    # requests.append(req_title)
+
+    # Empty the existing document.
+    print("Deleting current contents...")
+    end = get_end(doc_before)
+    response = delete_all(doc_svc, doc_id, end)
 
     # Execute update.
-    print("Gathering updated content...")
+    print("Writing updated content...")
     result = send_requests(doc_svc, doc_id, requests)
     print("Done.")
 
